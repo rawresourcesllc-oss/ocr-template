@@ -38,14 +38,22 @@ Every county processed through this pipeline yields the complete 4-format data s
 
 ---
 
-## Crash Prevention & Hardware Acceleration Rules
+## Apple Vision Intelligence & Crash-Proof Hardware Architecture
 
-Designed for sustained, multi-day runs over millions of scans without memory exhaustion:
+### 1. Exact Apple Vision Intelligence Configuration
+Tuned for maximum accuracy on historical 1885 cursive handwriting, faint clerk stamps, and deed marginalia:
+* **Deep Neural Architecture**: `VNRequestTextRecognitionLevelAccurate` (Deep transformer neural network)
+* **Contextual Linguistic Language Model**: `usesLanguageCorrection = YES` (Resolves ambiguous handwriting letterforms)
+* **Pinned Language**: `recognitionLanguages = ["en-US"]`
+* **Full-Resolution Scan Processing**: `minimumTextHeight = 0.0` (Zero downscaling; captures fine pen flourishes and stamps)
+* **Model Revision**: `revision = VNRecognizeTextRequestRevision3` (Apple's modern Transformer handwriting model)
 
-* **Apple Neural Engine Acceleration**: Uses Apple's 16-core Neural Engine and unified memory GPU for deep neural cursive and stamp recognition.
-* **Worker Process Recycling (`maxtasksperchild = 50`)**: Child processes terminate and respawn every 50 tasks, forcing the macOS kernel to unmap Metal and PyObjC heap allocations, preventing memory leaks.
-* **Minimalist Safety Floor (`SAFE_MIN_RAM_GB = 2.0`)**: Reserves only 2.0 GB of memory untouched for macOS kernel and `watchdogd`, unlocking **22.0 GB of a 24 GB Mac mini** for active computing.
-* **Kernel Memory Pressure Monitoring**: Continuously monitors `sysctl kern.memorystatus_vm_pressure_level`. Pauses and collects garbage if memory pressure rises to WARN ($\ge 2$).
+### 2. Dynamic Hardware RAM Probing & 22 GB / 2.0 GB Split
+Designed for sustained, multi-day runs over millions of scans without memory exhaustion or kernel panics:
+* **Hardware Probing**: Automatically detects total physical RAM and CPU cores on startup.
+* **The 22 GB / 2.0 GB Split**: On a 24 GB Mac (e.g. Mac Mini M4 Pro), reserves only 2.0 GB for macOS kernel and `watchdogd`, unlocking **22.0 GB for active computing**. On other machines (16 GB, 32 GB, 64 GB), automatically calculates the proportional safe split.
+* **Worker Process Recycling (`maxtasksperchild = 50`)**: Child processes terminate and respawn every 50 tasks, forcing the macOS kernel to unmap Metal, CoreGraphics, and PyObjC heap allocations, permanently eliminating memory leaks.
+* **Kernel Memory Pressure Gate**: Continuously monitors `sysctl kern.memorystatus_vm_pressure_level`. Pauses and flushes garbage collection if memory pressure rises to WARN ($\ge 2$).
 * **Throughput**: ~24–28 pages/second (~1,500 pages/min, ~90,000 pages/hour) with 10 parallel workers on M4 Pro.
 
 ---

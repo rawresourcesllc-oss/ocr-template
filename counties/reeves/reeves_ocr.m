@@ -170,6 +170,8 @@ BOOL process_image_file(NSString *filePath, NSString *relPath, NSString *county,
             req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
             req.usesLanguageCorrection = YES;
             req.recognitionLanguages = @[@"en-US"];
+            req.minimumTextHeight = 0.0;
+            req.revision = VNRecognizeTextRequestRevision3;
             
             NSError *err = nil;
             [handler performRequests:@[req] error:&err];

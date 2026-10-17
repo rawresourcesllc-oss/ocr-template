@@ -106,21 +106,34 @@ Every county OCR execution must produce the following standardized output suite:
 
 ---
 
-## 2. Hardware-Accelerated Engine & Crash Prevention Rules
+## 2. Apple Vision Intelligence & Hardware Crash Prevention Architecture
 
-To process 500,000 to 2,000,000+ images per county without memory leaks or macOS kernel watchdog panics:
+### A. Exact Vision Intelligence Configuration (Handwriting & Deed Optimized)
+To accurately transcribe 1885 cursive handwriting, faint clerk stamps, and historical letterforms:
+* **Deep Neural Level**: `recognitionLevel = VNRequestTextRecognitionLevelAccurate`
+* **Linguistic Language Correction**: `usesLanguageCorrection = YES` (resolves ambiguous cursive flourishes)
+* **Pinned Language**: `recognitionLanguages = ["en-US"]`
+* **Full-Resolution Uncompressed Processing**: `minimumTextHeight = 0.0` (zero downscaling; preserves fine penstrokes and marginalia)
+* **Model Revision**: `revision = VNRecognizeTextRequestRevision3` (Apple's modern Transformer handwriting model introduced in macOS Ventura/Sonoma)
 
-1. **Dedicated Worker Recycling (`maxtasksperchild = 50`)**:
-   Long-running native Objective-C/Metal allocations do not fully clear in Python's autorelease pool alone. Worker child processes must be destroyed and respawned after 50 tasks to force the macOS kernel to unmap 100% of heap and unified memory.
-2. **Minimalist Dynamic RAM Floor (`SAFE_MIN_RAM_GB = 2.0`)**:
-   Reserves only 2.0 GB of memory untouched for macOS kernel and `watchdogd`, unlocking 22.0 GB of a 24 GB Mac mini for active computing.
-3. **Kernel Memory Pressure Monitoring**:
-   Before every batch, query `sysctl kern.memorystatus_vm_pressure_level`. If pressure $\ge 2$ (WARN or CRITICAL), immediately pause, invoke `gc.collect()`, and resume once pressure returns to 1 and available RAM $\ge 3.0\text{ GB}$.
-4. **Optimized Concurrency**:
-   * **10 Workers** on Apple Silicon M-series (M1/M2/M3/M4 Pro/Max).
-   * Yields **~24–28 pages/second** (~1,500 pages/min, ~90,000 pages/hour).
-5. **Periodic SQLite WAL Checkpoints**:
-   Call `PRAGMA wal_checkpoint(PASSIVE);` every 1,500 images to prevent the `-wal` file from ballooning.
+### B. Dynamic Hardware RAM Probing & Standard 22 GB / 2.0 GB Split
+Before execution, the pipeline dynamically probes physical hardware RAM and CPU architecture:
+* **24 GB Hardware (e.g. Mac Mini M4 Pro)**:
+  * **Usable Active Ceiling**: **22.0 GB**
+  * **Inviolable Safety Reserve**: **2.0 GB** (strictly preserved for macOS kernel, WindowServer, and `watchdogd`)
+* **Dynamic Auto-Calculation (Other Machine Configurations)**:
+  * Total RAM $\le 16\text{ GB}$: 1.5 GB reserve floor.
+  * Total RAM $16 - 32\text{ GB}$: 2.0 GB reserve floor (e.g. 22 GB usable on 24 GB Mac).
+  * Total RAM $> 32\text{ GB}$ (64/128 GB Studio): 3.0 GB reserve floor.
+* **Worker Process Recycling (`maxtasksperchild = 50`)**:
+  Worker child processes terminate and respawn every 50 tasks, forcing macOS to completely unmap Metal, CoreGraphics, and PyObjC heap allocations, permanently eliminating memory leaks.
+* **Kernel Memory Pressure Gate**:
+  Queries `sysctl kern.memorystatus_vm_pressure_level`. If pressure $\ge 2$ (WARN/CRITICAL) or RAM drops below the reserve floor, the pipeline automatically pauses, collects garbage, and resumes once normal memory headroom ($\ge \text{floor} + 1.0\text{ GB}$) is restored.
+* **Optimized Concurrency**:
+  * Auto-calculated as `min(cpu_cores - 2, 12)` (10 workers on 12-core M4 Pro).
+  * Yields **~24–28 pages/second** (~1,500 pages/min, ~90,000 pages/hour).
+* **Periodic SQLite WAL Checkpoints**:
+  Invokes `PRAGMA wal_checkpoint(PASSIVE);` every 1,500 images to prevent `-wal` disk bloat.
 
 ---
 

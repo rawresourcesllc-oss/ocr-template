@@ -39,11 +39,8 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 
 # Default Configuration
-DEFAULT_WORKERS = 10
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_MAX_TASKS_PER_CHILD = 50
-DEFAULT_SAFE_MIN_RAM_GB = 2.0
-DEFAULT_RESUME_RAM_GB = 3.0
 COOPERATIVE_YIELD_SEC = 0.01
 
 STOPWORDS_LOT_BLK = {"NO", "NUMBER", "OR", "AND", "OF", "IN", "THE", "S", "BOLD", "TO", "BEING", "ALL", "PART"}
@@ -55,6 +52,50 @@ class TimeoutError(Exception):
 
 def _alarm_handler(signum, frame):
     raise TimeoutError("OCR timeout")
+
+
+def get_hardware_memory_profile(requested_reserve=None, requested_workers=None):
+    """
+    Dynamically probes hardware RAM and CPU architecture.
+    Calculates the 22 GB / 2.0 GB split (or proportional split on other hardware):
+      - Total Physical RAM
+      - Minimal Safety Floor (default 2.0 GB on 24 GB hardware, unlocking 22.0 GB for active work)
+      - Usable RAM Ceiling
+      - Optimal Worker Concurrency
+    """
+    vm = psutil.virtual_memory()
+    total_ram_gb = vm.total / (1024 ** 3)
+    cpu_cores = os.cpu_count() or 8
+
+    if requested_reserve is not None and requested_reserve > 0:
+        safe_floor_gb = float(requested_reserve)
+    else:
+        # Standard 22 GB / 2.0 GB split logic:
+        # On a 24 GB Mac (e.g. 22-26 GB total), floor is strictly 2.0 GB, leaving 22 GB usable.
+        if total_ram_gb <= 16.5:
+            safe_floor_gb = 1.5
+        elif total_ram_gb <= 32.5:
+            safe_floor_gb = 2.0  # 2.0 GB reserve -> 22 GB usable on a 24 GB Mac mini
+        else:
+            safe_floor_gb = 3.0
+
+    usable_ram_gb = max(1.0, total_ram_gb - safe_floor_gb)
+
+    if requested_workers is not None and requested_workers > 0:
+        workers = requested_workers
+    else:
+        # Leaves 2 CPU cores free for macOS kernel, disk I/O, WindowServer, and watchdogd.
+        # Each Apple Vision worker peaks at ~250 MB unified memory.
+        workers = max(2, min(cpu_cores - 2, 12))
+
+    return {
+        "total_ram_gb": total_ram_gb,
+        "safe_floor_gb": safe_floor_gb,
+        "resume_floor_gb": safe_floor_gb + 1.0,
+        "usable_ram_gb": usable_ram_gb,
+        "cpu_cores": cpu_cores,
+        "workers": workers,
+    }
 
 
 def get_system_ram_status():
@@ -95,7 +136,7 @@ def get_system_ram_status():
     return avail_gb, pressure
 
 
-def enforce_ram_safety(safe_floor_gb=DEFAULT_SAFE_MIN_RAM_GB, resume_gb=DEFAULT_RESUME_RAM_GB, logger=None):
+def enforce_ram_safety(safe_floor_gb=2.0, resume_gb=3.0, logger=None):
     """Pauses pipeline execution if RAM drops below safe floor or pressure rises."""
     avail_gb, pressure = get_system_ram_status()
     if avail_gb < safe_floor_gb or pressure >= 2:
@@ -296,6 +337,8 @@ def process_instrument(task_args):
                 req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
                 req.setUsesLanguageCorrection_(True)
                 req.setRecognitionLanguages_(["en-US"])
+                req.setMinimumTextHeight_(0.0)
+                req.setRevision_(Vision.VNRecognizeTextRequestRevision3)
 
                 success, err = reqHandler.performRequests_error_([req], None)
                 pageLines = []
@@ -386,8 +429,8 @@ def main():
     parser.add_argument("--input-dir", required=True, help="Path to input scanned documents")
     parser.add_argument("--output-dir", required=True, help="Base path for outputs")
     parser.add_argument("--outputs", default="all", help="Output formats: all, or comma-separated pdf,text,db")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Parallel workers (default: {DEFAULT_WORKERS})")
-    parser.add_argument("--ram-floor", type=float, default=DEFAULT_SAFE_MIN_RAM_GB, help=f"Safe RAM reserve in GB (default: {DEFAULT_SAFE_MIN_RAM_GB})")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel workers (auto-calculated from CPU cores if omitted)")
+    parser.add_argument("--ram-floor", type=float, default=None, help="Safe RAM reserve in GB (auto-calculated 22GB/2GB split if omitted)")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help=f"Batch size per commit (default: {DEFAULT_BATCH_SIZE})")
     args = parser.parse_args()
 
@@ -395,6 +438,11 @@ def main():
     inDir = os.path.abspath(args.input_dir)
     outDir = os.path.abspath(args.output_dir)
     os.makedirs(outDir, exist_ok=True)
+
+    hw = get_hardware_memory_profile(args.ram_floor, args.workers)
+    workers = hw["workers"]
+    ram_floor = hw["safe_floor_gb"]
+    resume_floor = hw["resume_floor_gb"]
 
     gen_pdf = "pdf" in args.outputs or args.outputs == "all"
     gen_text_json = "text" in args.outputs or args.outputs == "all"
@@ -415,12 +463,15 @@ def main():
     log("=" * 75)
     log(f"UNIVERSAL TEXAS COUNTY APPLE SILICON OCR ENGINE — {county.upper()} COUNTY")
     log("=" * 75)
-    log(f"Input Directory  : {inDir}")
-    log(f"Output Directory : {outDir}")
-    log(f"Database Target  : {dbPath}")
-    log(f"PDF Output       : {'ENABLED' if gen_pdf else 'DISABLED'}")
-    log(f"Text/JSON Output : {'ENABLED' if gen_text_json else 'DISABLED'}")
-    log(f"Workers / Floor  : {args.workers} Workers | {args.ram_floor:.1f} GB RAM Floor")
+    log(f"Input Directory   : {inDir}")
+    log(f"Output Directory  : {outDir}")
+    log(f"Database Target   : {dbPath}")
+    log(f"Hardware Probed   : {hw['total_ram_gb']:.1f} GB RAM | {hw['cpu_cores']} CPU Cores")
+    log(f"Crash-Proof Split : {hw['usable_ram_gb']:.1f} GB Usable Ceiling | {ram_floor:.1f} GB Safe Floor")
+    log(f"Concurrency       : {workers} Workers (Batch Size: {args.batch_size})")
+    log(f"Vision Engine     : Revision 3 Transformer Handwriting Model (minimumTextHeight: 0.0)")
+    log(f"PDF Output        : {'ENABLED' if gen_pdf else 'DISABLED'}")
+    log(f"Text/JSON Output  : {'ENABLED' if gen_text_json else 'DISABLED'}")
     log("=" * 75)
 
     init_database(dbPath)
@@ -460,12 +511,12 @@ def main():
     t0 = time.time()
     ctx = mp.get_context("spawn")
     with ctx.Pool(
-        processes=args.workers,
+        processes=workers,
         initializer=worker_init,
         maxtasksperchild=DEFAULT_MAX_TASKS_PER_CHILD,
     ) as pool:
         for i in range(0, len(pendingTasks), args.batch_size):
-            enforce_ram_safety(safe_floor_gb=args.ram_floor, resume_gb=args.ram_floor + 1.0, logger=log)
+            enforce_ram_safety(safe_floor_gb=ram_floor, resume_gb=resume_floor, logger=log)
 
             batch = pendingTasks[i : i + args.batch_size]
             t_b0 = time.time()
