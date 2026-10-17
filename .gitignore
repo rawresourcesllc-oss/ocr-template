@@ -1,0 +1,54 @@
+# Operating System & IDE Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.vscode/
+.idea/
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+brazos_env/
+.env
+
+# Native Binaries
+county_ocr
+reeves_ocr
+*.o
+*.dylib
+
+# Scanned Images & Output Documents (Never commit multi-GB datasets to Git)
+*.tif
+*.tiff
+*.001
+*.002
+*.jpg
+*.jpeg
+*.png
+Searchable_PDFs/
+Text_JSON/
+Database/
+Runsheets/
+*.xlsx
+*.xls
+BRAZOSCC/
+
+# SQLite Databases & WAL Cache
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Execution Logs
+*.log
+ocr_progress.log
+brazos_ocr.log
+transfer.log
